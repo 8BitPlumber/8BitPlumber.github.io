@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Bowser Frames</title>
+		<link rel="stylesheet" type="text/css" href="css/main.css">
+	</head>
+	<body>
+		<h1>Bowser Frames</h1>
+		<p>There are two websites with bowser frames.</p>
+		<p>Those two are:</p>
+			<ul>
+			<li><a href="https://3.creep.io/smb1/bowserframes/">Bowser Frames (3Creepio)</a></li>
+			<li><a href="https://somewes.com/smb-time/smb1-bowser-beta/">Bowser Frames (Somewes)</a></li>
+			</ul>
+	</body>
+</html>
