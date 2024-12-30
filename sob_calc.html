@@ -73,6 +73,37 @@ code {
     font-size: 1.3em;
     color: #80efe2;
 }
+input[type="radio"] {
+    appearance: none;
+    width: 15px;
+    height: 15px;
+    border: 2px solid lightgray;
+    border-radius: 50%;
+    outline: none;
+    cursor: pointer;
+    display: inline-block;
+    position: relative;
+    background-color: transparent;
+}
+
+input[type="radio"]:checked {
+    border-color: #00cfc2; /* Change border color when checked */
+    background-color: #00cfc2; /* Change background color when checked */
+}
+
+input[type="radio"]:checked::after {
+    content: '';
+    display: block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: white; /* Change this for the dot's color */
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
 	</style>
 </head>
 <body>
