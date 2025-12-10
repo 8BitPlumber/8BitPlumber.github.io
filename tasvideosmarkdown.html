@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Bespoke Markup — Live Editor</title>
+<style>
+  :root{--bg:#0f1722;--panel:#0b1220;--muted:#9aa4b2;--accent:#7dd3fc}
+  body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, 'Helvetica Neue', Arial; background:linear-gradient(180deg,#071021 0%, #081226 60%); color:#e6eef6; margin:0; padding:18px;}
+  .wrap{display:grid;grid-template-columns:1fr 1fr;gap:16px;height:84vh}
+  .panel{background:var(--panel);padding:12px;border-radius:12px;box-shadow:0 6px 24px rgba(2,6,23,.7);overflow:auto}
+  textarea#source{width:100%;height:100%;min-height:100%;resize:none;background:#041021;color:#dfeefb;border:0;padding:12px;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, 'Roboto Mono', monospace;font-size:14px;}
+  #preview{padding:12px;color:#dbeafe}
+  header{display:flex;gap:10px;align-items:center;margin-bottom:12px}
+  button{background:transparent;border:1px solid rgba(125,211,252,.14);color:var(--accent);padding:8px 12px;border-radius:8px;cursor:pointer}
+  button.secondary{border-color:rgba(255,255,255,.06);color:var(--muted)}
+  pre{background:#051629;padding:8px;border-radius:6px;overflow:auto}
+  table{border-collapse:collapse;width:100%}
+  table,td,th{border:1px solid rgba(255,255,255,.06);padding:6px}
+  img.emb{max-width:100%;height:auto;border-radius:6px}
+  h1,h2,h3,h4{color:#bfe9ff}
+  .toc{background:#031226;padding:8px;border-radius:6px;margin-bottom:8px}
+</style>
+</head>
+<body>
+<header>
+  <h2 style="margin:0;font-weight:600">Bespoke Markup — Live Editor</h2>
+  <div style="flex:1"></div>
+  <button id="btnExport">Export HTML</button>
+  <button id="btnSample" class="secondary">Insert Sample</button>
+</header>
+<div class="wrap">
+  <div class="panel">
+    <textarea id="source" spellcheck="false" placeholder="Write your bespoke markup here..."></textarea>
+  </div>
+  <div class="panel" id="preview" aria-live="polite">
+    <div style="opacity:.6;margin-bottom:8px">Preview</div>
+    <div id="content"></div>
+  </div>
+</div>
+<script>
+// Simple parser for the bespoke markup described by the user. Not 100% feature-complete but supports common features.
+(function(){
+  const src = document.getElementById('source');
+  const content = document.getElementById('content');
+  const btnExport = document.getElementById('btnExport');
+  const btnSample = document.getElementById('btnSample');
+
+  function escapeHTML(s){
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function inlineTransforms(text){
+    // images/links: [url|opt1|opt2|...]
+    // handle image shortcuts: [http...png|w=480|h=200|alt=foo|left]
+    text = text.replace(/\[(https?:\/\/[^\]|\s]+)\|([^\]]+)\]/g,(m,url,opts)=>{
+      // if url ends with image ext -> image with options
+      const isImg = /\.(png|jpg|jpeg|gif|svg)(?:\?|$)/i.test(url);
+      const parts = opts.split('|').map(p=>p.trim());
+      const attrs = {};
+      parts.forEach(p=>{ const kv = p.split('='); if(kv.length==2) attrs[kv[0]] = kv[1]; else attrs[p] = true; });
+      if(isImg){
+        let a = `<img src="${escapeHTML(url)}" class="emb"`;
+        if(attrs.alt) a += ` alt="${escapeHTML(attrs.alt)}"`;
+        if(attrs.title) a += ` title="${escapeHTML(attrs.title)}"`;
+        if(attrs.w) a += ` width="${escapeHTML(attrs.w)}"`;
+        if(attrs.h) a += ` height="${escapeHTML(attrs.h)}"`;
+        a += ' />';
+        if(attrs.left) return `<div style="float:left;margin:0 12px 12px 0">${a}</div>`;
+        if(attrs.right) return `<div style="float:right;margin:0 0 12px 12px">${a}</div>`;
+        return a;
+      } else {
+        // image as link or complex link
+        const linkText = attrs.alt ? attrs.alt : url;
+        if(attrs['=']){
+          return `<a href="${escapeHTML(url)}"><img src="${escapeHTML(attrs['='])}" class="emb" alt="${escapeHTML(linkText)}"/></a>`;
+        }
+        return `<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(linkText)}</a>`;
+      }
+    });
+
+    // automatic linkify for plain http/ftp/mailto
+    text = text.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+
+    // inline emphasis: '' -> em, __ -> strong, (( )) -> small, {{ }} -> tt/code, --- -> del
+    text = text.replace(/''(.+?)''/g,'<em>$1</em>');
+    text = text.replace(/__(.+?)__/g,'<strong>$1</strong>');
+    text = text.replace(/\(\((.+?)\)\)/g,'<small>$1</small>');
+    text = text.replace(/\{\{(.+?)\}\}/g,'<code>$1</code>');
+    text = text.replace(/---(.+?)---/g,'<del>$1</del>');
+    // double quotes «« »» -> q
+    text = text.replace(/««(.+?)»»/g,'<q>$1</q>');
+    // superscript ⸢⸢text⸣⸣ and subscript ⸤⸤text⸥⸥
+    text = text.replace(/⸢⸢(.+?)⸣⸣/g,'<sup>$1</sup>');
+    text = text.replace(/⸤⸤(.+?)⸥⸥/g,'<sub>$1</sub>');
+
+    return text;
+  }
+
+  function parse(text){
+    const lines = text.replace(/\r/g,'').split('\n');
+    let out = [];
+    let i=0;
+    // state
+    let inPre = false;
+    let preBuffer = [];
+    let inList = null; // {type:'ul'|'ol', level: n}
+    let listStack = [];
+    let inDef = false;
+    let defBuffer = [];
+    let inTable = false;
+    let tableRows = [];
+    let inQuote = false;
+    let quoteBuf = [];
+    let toc = [];
+
+    function flushPre(){ if(inPre){ out.push('<pre>'+escapeHTML(preBuffer.join('\n'))+'</pre>'); preBuffer=[]; inPre=false; }}
+    function flushListToLevel(targetLevel){ while(listStack.length>targetLevel){ out.push('</'+listStack.pop()+'>'); } }
+    function flushDefs(){ if(inDef){ out.push('<dl>' + defBuffer.join('') + '</dl>'); defBuffer=[]; inDef=false; }}
+    function flushTable(){ if(inTable){ out.push(renderTable(tableRows)); tableRows=[]; inTable=false; }}
+    function flushQuote(){ if(inQuote){ out.push('<blockquote>'+inlineTransforms(escapeHTML(quoteBuf.join('\n'))).replace(/\n/g,'<br/>')+'</blockquote>'); quoteBuf=[]; inQuote=false; }}
+
+    function renderTable(rows){ // rows: array of arrays
+      let html = '<div style="overflow:auto"><table>'; for(let r=0;r<rows.length;r++){ const row = rows[r]; html += (r===0?'<tr>':'<tr>'); for(let c=0;c<row.length;c++){ const cell = row[c]; if(r===0) html += '<th>'+inlineTransforms(escapeHTML(cell.trim()))+'</th>'; else html += '<td>'+inlineTransforms(escapeHTML(cell.trim()))+'</td>'; } html += '</tr>'; } html += '</table></div>'; return html; }
+
+    while(i<lines.length){ let line = lines[i];
+      // TOC macro
+      if(line.trim()==='%%TOC%%'){ out.push('%%TOC%%'); i++; continue; }
+
+      // code embed block
+      if(/^%%SRC_EMBED\b/.test(line)){
+        // collect until %%END_EMBED
+        let lang = line.match(/^%%SRC_EMBED\s*(\S*)/)?.[1]||'';
+        let buf=[]; i++;
+        while(i<lines.length && !/^%%END_EMBED/.test(lines[i])){ buf.push(lines[i]); i++; }
+        out.push('<pre><code'+(lang?(' class="lang-'+escapeHTML(lang)+'"'):'')+'>'+escapeHTML(buf.join('\n'))+'</code></pre>');
+        i++; continue;
+      }
+
+      // quote blocks macros
+      if(/^%%QUOTE/.test(line)){
+        let who = (line.match(/^%%QUOTE\s*(?:\[(.*)\])?/)||[])[1]||'';
+        let buf=[]; i++;
+        while(i<lines.length && !/^%%QUOTE_END/.test(lines[i])){ buf.push(lines[i]); i++; }
+        let caption = who?('<cite>'+escapeHTML(who)+'</cite>'):'', inner = inlineTransforms(escapeHTML(buf.join('\n'))).replace(/\n/g,'<br/>');
+        out.push('<blockquote>'+caption+inner+'</blockquote>'); i++; continue;
+      }
+
+      // Div blocks
+      if(/^%%DIV\s+/.test(line)){
+        const cls = line.split(/\s+/).slice(1).join(' ');
+        let buf=[]; i++;
+        while(i<lines.length && !/^%%DIV_END/.test(lines[i])){ buf.push(lines[i]); i++; }
+        out.push(`<div class="${escapeHTML(cls)}">${inlineTransforms(escapeHTML(buf.join('\n'))).replace(/\n/g,'<br/>')}</div>`);
+        i++; continue;
+      }
+
+      // preformatted: if line starts with space
+      if(line.startsWith(' ')){
+        inPre = true; preBuffer.push(line.slice(1)); i++; // keep reading subsequent pre lines
+        // continue consuming following pre lines
+        while(i<lines.length && lines[i].startsWith(' ')){ preBuffer.push(lines[i].slice(1)); i++; }
+        flushPre(); continue;
+      }
+
+      // table lines
+      if(/^\|/.test(line)){
+        // parse table row
+        const cells = line.replace(/\|$/,'').split('|').slice(1);
+        inTable = true; tableRows.push(cells); i++; // continue to next
+        // if next line not a table line -> flush later
+        if(i<lines.length && !/^\|/.test(lines[i])){ flushTable(); }
+        continue;
+      }
+
+      // definition list
+      if(/^;[^:]+:/.test(line)){
+        inDef = true; const m = line.match(/^;([^:]+):\s*(.*)$/); const term = m[1].trim(); const def = m[2]||''; defBuffer.push('<dt>'+escapeHTML(term)+'</dt><dd>'+inlineTransforms(escapeHTML(def))+'</dd>'); i++; // if next not def -> flush
+        if(i<lines.length && !/^;[^:]+:/.test(lines[i])) flushDefs(); continue;
+      }
+
+      // headings !, !!, !!!, !!!!
+      const hMatch = line.match(/^(\!{1,4})\s*(.*)$/);
+      if(hMatch){ const lvl = hMatch[1].length; const txt = hMatch[2]; const tag = ['h4','h3','h2','h1'][lvl-1]||'h4'; out.push(`<${tag}>${inlineTransforms(escapeHTML(txt))}</${tag}>`); // record for TOC
+        toc.push({level:lvl,text:txt}); i++; continue; }
+
+      // horizontal rule (4 or more - at start)
+      if(/^\-{4,}\s*$/.test(line)){ out.push('<hr/>'); i++; continue; }
+
+      // blockquote lines starting with >
+      if(/^>\s?/.test(line)){
+        // collect consecutive quote lines
+        let buf = [line.replace(/^>\s?/,'')]; i++;
+        while(i<lines.length && /^>\s?/.test(lines[i])){ buf.push(lines[i].replace(/^>\s?/,'')); i++; }
+        out.push('<blockquote>'+inlineTransforms(escapeHTML(buf.join('\n'))).replace(/\n/g,'<br/>')+'</blockquote>'); continue;
+      }
+
+      // lists: * and # with multiple levels
+      const listMatch = line.match(/^([*#]{1,})\s+(.*)$/);
+      if(listMatch){ const markers = listMatch[1]; const level = markers.length; const type = markers[0]=='*' ? 'ul' : 'ol';
+        // manage stack
+        while(listStack.length < level){ listStack.push(type); out.push('<'+type+'>'); }
+        while(listStack.length > level){ out.push('</'+listStack.pop()+'>'); }
+        // if switching type at same level
+        if(listStack.length>=level && listStack[listStack.length-1] !== type){ // close and open
+          out.push('</'+listStack.pop()+'>'); listStack.push(type); out.push('<'+type+'>');
+        }
+        out.push('<li>'+inlineTransforms(escapeHTML(listMatch[2]))+'</li>'); i++; // if next not list -> close all
+        if(i<lines.length && !/^([*#]{1,})\s+/.test(lines[i])){ flushListToLevel(0); }
+        continue;
+      }
+
+      // blank line => paragraph separator
+      if(line.trim()===''){ flushPre(); flushDefs(); flushTable(); flushQuote(); flushListToLevel(0); i++; continue; }
+
+      // line with forced linebreak marker %%% — replace with <br/>
+      if(line.indexOf('%%%')>=0){ out.push('<p>'+inlineTransforms(escapeHTML(line)).replace(/%%%/g,'<br/>')+'</p>'); i++; continue; }
+
+      // paragraph normal text: collect contiguous non-empty non-special lines into paragraph
+      let paraBuf = [line]; i++;
+      while(i<lines.length && lines[i].trim()!=='' && !/^([*#;!>\|]|%%| {1}|----)/.test(lines[i])){ paraBuf.push(lines[i]); i++; }
+      out.push('<p>'+inlineTransforms(escapeHTML(paraBuf.join('\n'))).replace(/\n/g,'<br/>')+'</p>');
+    }
+
+    // finalize any stacks
+    flushPre(); flushDefs(); flushTable(); flushQuote(); flushListToLevel(0);
+
+    // post-process: replace TOC macro if present
+    const html = out.join('\n');
+    if(html.includes('%%TOC%%')){
+      // build TOC from headings recorded
+      let tocHtml = '<div class="toc"><strong>Contents</strong><ul>'; for(const t of toc){ tocHtml += `<li style="margin-left:${(t.level-1)*10}px">${escapeHTML(t.text)}</li>`; } tocHtml += '</ul></div>';
+      return html.replace('%%TOC%%', tocHtml);
+    }
+
+    return html;
+  }
+
+  function update(){ const v = src.value; const html = parse(v); content.innerHTML = html; }
+
+  // autosave sample localStorage key
+  src.addEventListener('input', ()=>{ update(); localStorage.setItem('bespoke:last', src.value); });
+  btnExport.addEventListener('click', ()=>{
+    const blob = new Blob([content.innerHTML],{type:'text/html'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'export.html'; a.click(); URL.revokeObjectURL(url);
+  });
+  btnSample.addEventListener('click', ()=>{ src.value = SAMPLE; update(); });
+
+  // load last
+  const last = localStorage.getItem('bespoke:last'); if(last) src.value = last; else src.value = '';
+  update();
+
+  const SAMPLE = `! Sample heading\n\nThis is a paragraph with ''italic'' and __bold__ and {{teletype}}.\n\n* bullet one\n** nested bullet\n# numbered one\n## nested number\n\n;Term:Definition of the term.\n\n> This is a quoted block.\n\n----\n\n%%TOC%%\n\n!! Smaller heading\n\n[http://example.com|Example link]\n\n[https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png|alt=Demo|w=240|left]\n\n| |col2|col3|\n||Header1||Header2||\n|cell1|cell2|cell3|\n\n%%SRC_EMBED lua\nfunction factorial(n)\n  local x = 1\n  for i = 2, n do\n    x = x * i\n  end\n  return x\nend\n%%END_EMBED\n\n`; 
+})();
+</script>
+</body>
+</html>
